@@ -2,6 +2,7 @@
 #include <map>
 #include <string>
 #include <fstream>
+#include <cpprest/filestream.h>
 
 namespace user_map
 {
@@ -32,13 +33,13 @@ namespace user_map
 
 	struct user
 	{
-		std::string username, password;
+		std::string password;
 		permission_union permissions_union;
 	};
 
 	class user_map
 	{
-		std::map<std::string, user> user_map_;
+		std::map<std::string, user> user_map_;		//username, user
 	public:
 		user_map()
 		{
@@ -50,26 +51,40 @@ namespace user_map
 			std::string username, password;
 			unsigned short permissions;
 			while (user_file >> username >> password >> permissions)
-				user_map_.insert({ username,{username,password,permission_union{permissions}} });
+				user_map_.insert({ username,{password,permission_union{permissions}} });
 
 			return user_map_.size();
 		}
-
+		pplx::task<size_t> async_load_users_from_file(std::string path)
+		{
+			//Concurrency::streams::file_stream<std::string> user_file;
+			//user_file.
+			return pplx::create_task([this, path]()
+			{
+				return load_users_from_file(path);
+			});
+		}
 		size_t save_users_to_file(std::string path)
 		{
 			std::ofstream user_file(path);
 			size_t size{ 0 };
 			for (auto& user : user_map_)
 			{
-				user_file << user.second.username << " " << user.second.password << " " << user.second.permissions_union.permissions_short << std::endl;
+				user_file << user.first << " " << user.second.password << " " << user.second.permissions_union.permissions_short << std::endl;
 				size++;
 			}
 			return size;
 		}
-
+		pplx::task<size_t> async_save_users_to_file(std::string path)
+		{
+			return pplx::create_task([this, path]()
+			{
+				return save_users_to_file(path);
+			});
+		}
 		void add_user(std::string username, std::string password, permission_union permissions)
 		{
-			user_map_.insert({ username,{username,password,permissions} });
+			user_map_.insert({ username,{password,permissions} });
 		}
 		user& get_user(std::string username)
 		{

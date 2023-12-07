@@ -23,5 +23,8 @@
     <ClInclude Include="src\include\usermap.h">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="src\include\RESTapi.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
   </ItemGroup>
 </Project>

@@ -82,7 +82,7 @@ namespace user_map
 				return save_users_to_file(path);
 			});
 		}
-		void add_user(std::string username, std::string password, permission_union permissions)
+		void add_user(std::string& username, std::string& password, permission_union& permissions)
 		{
 			user_map_.insert({ username,{password,permissions} });
 		}

@@ -65,7 +65,7 @@ public:
 	}
 };
 
-class rest_logger
+/*class rest_logger
 {
 	std::ofstream log_file_;
 	rest_logger(std::string path)
@@ -82,7 +82,7 @@ class rest_logger
 	{
 		
 	}
-};
+};*/
 
 namespace handlers
 {
@@ -124,6 +124,8 @@ namespace handlers
 	void handle_get(web::http::http_request& request)
 	{
 		std::vector<utility::string_t>path = web::http::uri::split_path(web::http::uri::decode(request.relative_uri().path()));
+
+		std::map<utility::string_t, utility::string_t> query = web::http::uri::split_query(web::http::uri::decode(request.relative_uri().query()));
 
 		if(path.empty())			/// /
 		{

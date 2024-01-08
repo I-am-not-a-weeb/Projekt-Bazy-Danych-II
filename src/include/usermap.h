@@ -33,7 +33,7 @@ namespace user_map
 
 	struct user
 	{
-		std::string password;
+		std::string username,password;
 		permission_union permissions_union;
 	};
 
@@ -45,13 +45,17 @@ namespace user_map
 		{
 			
 		}
+		user_map(user_map& other)
+		{
+			user_map_ = other.user_map_;
+		}
 		size_t load_users_from_file(std::string path)
 		{
 			std::ifstream user_file(path);
 			std::string username, password;
 			unsigned short permissions;
 			while (user_file >> username >> password >> permissions)
-				user_map_.insert({ username,{password,permission_union{permissions}} });
+				user_map_.insert({ username,{username,password,permission_union{permissions}} });
 
 			return user_map_.size();
 		}
@@ -84,11 +88,28 @@ namespace user_map
 		}
 		void add_user(std::string& username, std::string& password, permission_union& permissions)
 		{
-			user_map_.insert({ username,{password,permissions} });
+			user_map_.insert({ username,{username,password,permissions} });
+		}
+		void add_user(std::string username, std::string password, permission_union permissions)
+		{
+			user_map_.insert({ username,{username,password,permissions} });
+		}
+		void add_user(std::string username,user& user)
+		{
+			user_map_.insert({ username,{username,user.password,user.permissions_union} });
 		}
 		user& get_user(std::string username)
 		{
 			return user_map_.at(username);
+		}
+		std::map<std::string, user>& get_user_map()
+		{
+			return user_map_;
+		}
+
+		void operator=(const user_map& other)
+		{
+			user_map_ = other.user_map_;
 		}
 	};
 	namespace generate

@@ -8,6 +8,8 @@ namespace user_map
 {
 	struct permission_struct
 	{
+		bool banned : 1;
+
 		bool can_modify_admins : 1;
 		bool can_modify_users : 1;
 		bool can_modify_memes : 1;
@@ -118,6 +120,7 @@ namespace user_map
 		{
 			return permission_union{
 				{
+					false,
 					true,
 					true,
 					true,
@@ -141,6 +144,7 @@ namespace user_map
 					false,
 					false,
 					false,
+					false,
 					true,
 					true,
 					true,
@@ -156,6 +160,7 @@ namespace user_map
 			return permission_union
 			{
 				{
+					false,
 				false,
 				false,
 				false,

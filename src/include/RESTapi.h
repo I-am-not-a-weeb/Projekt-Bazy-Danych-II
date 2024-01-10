@@ -1,4 +1,6 @@
 ﻿#pragma once
+
+#pragma warning(disable: 4996)
 #include <cpprest/http_listener.h>
 #include <cpprest/asyncrt_utils.h>
 #include <cpprest/http_headers.h>
@@ -17,6 +19,7 @@
 namespace restsdk = web::http;
 namespace json = web::json;
 
+/*
 std::fstream log_file("log.txt", std::ios::out | std::ios::app);
 
 std::string getTimeStr() {
@@ -26,19 +29,7 @@ std::string getTimeStr() {
 	std::strftime(&s[0], s.size(), "%Y-%m-%d %H:%M:%S", std::localtime(&now));
 	return s;
 }
-
-std::string decode64(const std::string& val) {
-	using namespace boost::archive::iterators;
-	using It = transform_width<binary_from_base64<std::string::const_iterator>, 8, 6>;
-	return boost::algorithm::trim_right_copy_if(std::string(It(std::begin(val)), It(std::end(val))), [](char c) {return c == '\0';});
-}
-
-std::string encode64(const std::string& val) {
-	using namespace boost::archive::iterators;
-	using It = base64_from_binary<transform_width<std::string::const_iterator, 6, 8>>;
-	auto tmp = std::string(It(std::begin(val)), It(std::end(val)));
-	return tmp.append((3 - val.size() % 3) % 3, '=');
-}
+//*/
 
 class RESTServer
 {
@@ -86,12 +77,13 @@ public:
 
 namespace handlers
 {
+	/**
 	void request_handler(web::http::http_request& request, std::function<void(web::json::value const&, web::json::value&)> const& action)
 	{
 		auto answer = web::json::value::object();
 		request
 			.extract_json()
-			.then([&](pplx::task<web::json::value>& task)
+			.then([&](pplx::task<web::json::value> task)
 				{
 					try
 					{
@@ -103,7 +95,7 @@ namespace handlers
 							 session_id = utility::conversions::to_utf8string(request.headers().find(L"Cookie")->second);
 						}
 						
-						log_file << getTimeStr << " R: " << session_id << " " << request.method().c_str() << std::endl;
+						//log_file << getTimeStr << " R: " << session_id << " " << request.method().c_str() << std::endl;
 
 						//printJSON(jvalue, L"R: ");
 						if (!jvalue.is_null())
@@ -121,6 +113,7 @@ namespace handlers
 		//printJSON(answer, L"S: ");
 		//request.reply(web::http::status_codes::OK, answer);
 	}
+	//*
 	void handle_get(web::http::http_request& request)
 	{
 		std::vector<utility::string_t>path = web::http::uri::split_path(web::http::uri::decode(request.relative_uri().path()));
@@ -146,4 +139,5 @@ namespace handlers
 	{
 		
 	}
+	//*/
 }

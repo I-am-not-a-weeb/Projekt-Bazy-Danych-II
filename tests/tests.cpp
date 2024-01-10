@@ -2,6 +2,10 @@
 #include <boost/test/included/unit_test.hpp>
 #include "../src/include/requests.h"
 
+#include <opencv2/core.hpp>
+#include <opencv2/imgcodecs.hpp>
+
+
 std::ostream& operator<<(std::ostream& os, const routes& obj)
 {
 	os << static_cast<std::underlying_type<routes>::type>(obj);
@@ -75,14 +79,16 @@ BOOST_AUTO_TEST_SUITE_END()
 BOOST_AUTO_TEST_SUITE(handlers)
 
 web::http::experimental::listener::http_listener tmp_listener(L"http://localhost:7475");
-web::http::client::http_client tmp_client(L"http://localhost:7475");
+web::http::client::http_client tmp_client(L"http://localhost:7474/db/neo4j/tx/commit");
 user_map::user_map tmp_user_map;
 
 routing::RequestProcessor tmp_processor(tmp_listener, tmp_client, tmp_user_map);
+user_map::user userred{ "user","user",user_map::generate::user() };
 
+/**
 BOOST_AUTO_TEST_CASE(no_path)
 {
-	user_map::user userred{ "user","user",user_map::generate::user() };
+
 
 	tmp_user_map.add_user("user", userred);
 
@@ -95,13 +101,13 @@ BOOST_AUTO_TEST_CASE(no_path)
 
 	tmp_processor.add_session_ID(123456789, userred);
 
-	tmp_processor.handle_get(request_good);
-
 	request_good.get_response().then([](web::http::http_response response) {
 		BOOST_CHECK_EQUAL(response.status_code(), web::http::status_codes::MisdirectedRequest);
 		});
-}
 
+	tmp_processor.handle_get(request_good);
+}
+//*/
 BOOST_AUTO_TEST_CASE(post_signup)
 {
 	web::http::http_request request_bad1 = web::http::http_request();
@@ -158,18 +164,7 @@ BOOST_AUTO_TEST_CASE(post_signup)
 
 BOOST_AUTO_TEST_CASE(post_login)
 {
-	_CrtSetDbgFlag(_CRTDBG_ALLOC_MEM_DF | _CRTDBG_LEAK_CHECK_DF);
-	_CrtSetBreakAlloc(11474);
-	_CrtSetBreakAlloc(11475);
-	_CrtSetBreakAlloc(11485);
-	_CrtSetBreakAlloc(11500);
-	_CrtSetBreakAlloc(11501);
-	_CrtSetBreakAlloc(11502);
-	_CrtSetBreakAlloc(11503);
-	_CrtSetBreakAlloc(11561);
-	_CrtSetBreakAlloc(11562);
-	_CrtSetBreakAlloc(11563);
-
+	//_CrtSetDbgFlag(_CRTDBG_ALLOC_MEM_DF | _CRTDBG_LEAK_CHECK_DF);
 
 
 	web::http::http_request request_bad = web::http::http_request();
@@ -214,6 +209,81 @@ BOOST_AUTO_TEST_CASE(get_account)
 }
 
 
+BOOST_AUTO_TEST_CASE(upload_meme)
+{
+	std::string username_utf8 = tmp_user_map.get_user_map().begin()->second.username;
+	std::wstring username = utility::conversions::to_utf16string(username_utf8);
+
+	unsigned long long session_ID = tmp_processor.get_session_map().begin()->first;
+	/**
+	cv::Mat meme_payload = cv::imread("a.png", cv::IMREAD_UNCHANGED);
+
+	cv::Size meme_size = meme_payload.size();
+
+	size_t total_size = meme_size.height * meme_size.width * meme_payload.channels();
+
+	std::vector<uchar> meme_payload_vector(meme_payload.ptr(),meme_payload.ptr()+total_size);
+
+	std::wstring meme_payload_utf16(meme_payload_vector.begin(),meme_payload_vector.end());
+	//*/
+	std::wstring boundary = L"---------------------------7d159c1302d0y0";
+
+	// teraz bedzie bomba kurwa
+	// multipart/mixed request z³ozony z json'a i binarnego obrazka
+	// xD
+
+	// REEEEEEEEEE
+
+	std::fstream meme_file("a.png", std::ios::in | std::ios::binary);
+
+	std::stringstream meme_payload_utf8;
+	meme_payload_utf8 << meme_file.rdbuf();
+
+	std::fstream meme_file2("b.png", std::ios::out | std::ios::binary);
+
+	meme_file2 << meme_payload_utf8.str();
+
+	meme_file2.close();
+
+	std::wstring bodystream;
+
+	bodystream.append(L"--" + boundary + L"\r\n" );
+	bodystream.append(L"Content-Disposition: form-data; name=\"json\"\r\n\r\n");
+	bodystream.append(L"Content-Type: application/json\r\n");
+	bodystream.append(L"{\"title\":\"ale smieszne xd\",\"tags\":[\"humor\",\"witam\"],\"payload_type\":\"png\"}\r\n\r\n");
+	bodystream.append(L"--" + boundary + L"\r\n" );
+	bodystream.append(L"Content-Disposition: form-data; name=\"payload\"; filename=\"a.png\"\r\n");
+	bodystream.append(L"Content-Type: image/png\r\n\r\n");
+	bodystream.append(utility::conversions::to_utf16string(meme_payload_utf8.str()));
+	bodystream.append(L"\r\n--" + boundary + L"--\r\n");
+
+	web::http::http_request request = web::http::http_request();
+	request.set_method(web::http::methods::POST);
+	request.set_request_uri(L"/meme");
+	request.headers().add(L"Cookie", L"session_ID=" + std::to_wstring(session_ID));
+	request.headers().add(L"Content-Type", L"multipart/mixed;boundary=" + boundary);
+	
+	//std::wstring request_body{ L"{\"title\":\"ale smieszne xd\",\"tags\":[\"humor\",\"witam\"],\"payload\":\"" + meme_payload_utf16 + L"\",\"payload_type\":\"png\"}" };
+
+	//web::json::value request_body_json = web::json::value::parse(request_body);
+
+	//request.set_body(request_body_json);
+
+	/**/
+	request.get_response().then([](web::http::http_response response) {
+		BOOST_CHECK_EQUAL(response.status_code(), web::http::status_codes::Created);
+		});
+	//*/
+	tmp_processor.handle_post(request);
+
+	
+}
+/**/
+BOOST_AUTO_TEST_CASE(write_comment)
+{
+	
+}
+/**/
 /**
 BOOST_AUTO_TEST_CASE(rest_on)
 {

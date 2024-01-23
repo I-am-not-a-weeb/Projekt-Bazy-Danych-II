@@ -21,7 +21,13 @@
 #include <boost/algorithm/string.hpp>
 #include <boost/random.hpp>
 
-#include "RESTapi.h"
+
+#include <boost/archive/iterators/binary_from_base64.hpp>
+#include <boost/archive/iterators/base64_from_binary.hpp>
+#include <boost/archive/iterators/transform_width.hpp>
+#include <boost/algorithm/string.hpp>
+
+//#include "RESTapi.h"
 
 const std::wstring neo4j_uri{ L"http://localhost:7474/db/neo4j/tx/commit" };
 const std::wstring auth_64{ L"bmVvNGo6dGVzdDEyMzQ=" };
@@ -55,6 +61,8 @@ enum class routes : unsigned short
 	signup = 1,						// POST
 	login = 2,						// POST		
 
+	feed_page = 10,					// GET
+	preferences,					// GET, PATCH
 
 	account = 20,					// POST
 	account_username,				// GET, PATCH
@@ -247,6 +255,14 @@ namespace routing
 					}
 				}
 			}
+			else if (path.size() == 2 && path[0] == L"feed" && isNumber(path[1]))							//	/feed
+			{
+				return routes::feed_page;
+			}
+			else if (!path.empty() && path[0] == L"preferences")					//	/preferences
+			{
+				return routes::preferences;
+			}
 			else if (!path.empty() && path[0] == L"login")							//	/login
 			{
 				return routes::login;
@@ -267,7 +283,7 @@ namespace routing
 		}
 	}
 
-	class RequestProcessor
+	class request_processor
 	{
 		web::http::experimental::listener::http_listener& listener;
 		web::http::client::http_client& client;
@@ -280,14 +296,15 @@ namespace routing
 		boost::variate_generator<boost::mt19937_64&, boost::random::uniform_int_distribution<unsigned long long>> gen;
 
 	public:
-		RequestProcessor(
+		request_processor(
 			web::http::experimental::listener::http_listener& listener,
 			web::http::client::http_client& client,
 			user_map::user_map& users) : listener(listener), client(client), users(users),
 			rng(std::time(nullptr)),	dist(0, INT64_MAX), gen(rng, dist)
 		{
-			listener.support(web::http::methods::GET, std::bind( & RequestProcessor::handle_get, this, std::placeholders::_1));
-			listener.support(web::http::methods::POST, std::bind(&RequestProcessor::handle_post, this, std::placeholders::_1));
+			listener.support(web::http::methods::GET, std::bind( & request_processor::handle_get, this, std::placeholders::_1));
+			listener.support(web::http::methods::POST, std::bind(&request_processor::handle_post, this, std::placeholders::_1));
+			listener.support(web::http::methods::OPTIONS, std::bind(&request_processor::handle_options, this, std::placeholders::_1));
 			try
 			{
 				listener.open().wait();
@@ -306,12 +323,31 @@ namespace routing
 		{
 			return session_ID_map;
 		}
+		void handle_options(web::http::http_request request)
+		{
+			request.get_response().then([](web::http::http_response response)
+				{
+					response.headers().add(L"Access-Control-Allow-Origin", L"http://localhost:3000");
+					response.headers().add(L"Access-Control-Allow-Methods", L"GET, POST, OPTIONS");
+					response.headers().add(L"Access-Control-Allow-Headers", L"Content-Type, Authorization");
+					response.headers().add(L"Access-Control-Allow-Credentials", L"true");
+					response.headers().add(L"Access-Control-Max-Age", L"86400");
+				});
+			request.reply(web::http::status_codes::OK);
+		}
 		void handle_get(web::http::http_request request)
 		{
 			std::vector<utility::string_t>path = web::http::uri::split_path(web::http::uri::decode(request.relative_uri().path()));
 
 			unsigned long long session_ID{ 0 };
 			bool authorized{ false };
+
+			request.get_response().then([](web::http::http_response response)
+				{
+					response.headers().add(L"Access-Control-Allow-Origin", L"http://localhost:3000");
+					response.headers().add(L"Access-Control-Allow-Methods", L"GET, POST, OPTIONS, PATCH,DELETE");
+					response.headers().add(L"Access-Control-Allow-Credentials", L"true");
+				});
 
 			if (request.headers().find(L"Cookie") != request.headers().end())	// if cookie header exists
 			{
@@ -331,7 +367,6 @@ namespace routing
 					}
 				}
 			}
-			
 
 			if (!authorized || session_ID == 0)
 			{
@@ -339,10 +374,82 @@ namespace routing
 				return;
 			}
 
+			auto& user = session_ID_map.at(session_ID);
+
+			if (user.permissions_union.permissions.banned)
+			{
+				request.reply(web::http::status_codes::Forbidden);
+				return;
+			}
 
 			switch (path_to_route_parser(path))
 			{
-			case routes::account:
+			case routes::feed_page:
+				{
+					std::wstring cypher_get_feed_utf16;
+					cypher_get_feed_utf16.reserve(256);
+
+					cypher_get_feed_utf16.append(L"{\"statements\": [{\"statement\": \"MATCH(meme:Meme) RETURN meme ORDER BY meme.created_at DESC LIMIT ");
+					cypher_get_feed_utf16.append(std::to_wstring(stoi(path[1])*10+10));
+					cypher_get_feed_utf16.append(L" SKIP ");
+					cypher_get_feed_utf16.append(std::to_wstring(stoi(path[1]) * 10));
+					cypher_get_feed_utf16.append(L"\\\"\"}]}");
+
+					web::json::value cypher_get_feed_json{ web::json::value::parse(cypher_get_feed_utf16) };
+
+					web::http::http_request cypher_get_feed_request{ web::http::methods::GET };
+
+					cypher_get_feed_request.headers().add(L"Authorization", L"Basic " + auth_64);
+					cypher_get_feed_request.set_body(cypher_get_feed_json);
+
+					client.request(cypher_get_feed_request).then([&](web::http::http_response response)
+						{
+							web::json::value response_json{ response.extract_json().get() };
+
+							web::json::value send_response_json
+							{
+								response_json.at(L"results").as_array().at(0).as_object()
+								.at(L"data").as_array().at(0).as_object().at(L"row")
+							};
+							_DEBUG_WPRINT(response.to_string())
+							request.reply(web::http::status_codes::OK, send_response_json);
+							
+						}).wait();
+					break;
+				}
+				case routes::preferences:
+				{
+					utility::string_t username_utf16{ utility::conversions::to_string_t(user.username) };
+
+					std::wstring cypher_get_preferences_utf16;
+					cypher_get_preferences_utf16.reserve(256);
+
+					cypher_get_preferences_utf16.append(L"{\"statements\": [{\"statement\": \"MATCH(acc:Account)-[:PREFERENCES]->(prefs:Preferences) where acc.username=\\\"");
+					cypher_get_preferences_utf16.append(username_utf16);
+					cypher_get_preferences_utf16.append(L"\\\" return prefs \"}]}");
+
+					web::json::value cypher_get_user_json{ web::json::value::parse(cypher_get_preferences_utf16) };
+
+					web::http::http_request cypher_get_user_request{ web::http::methods::POST };
+					cypher_get_user_request.headers().add(L"Authorization", L"Basic " + auth_64);
+					cypher_get_user_request.set_body(cypher_get_user_json);
+
+					client.request(cypher_get_user_request).then([&](web::http::http_response response)
+					{
+						web::json::value response_json{ cypher_get_user_request.extract_json().get() };
+
+						web::json::value send_response_json
+						{
+							response_json.at(L"results").as_array().at(0).as_object()
+							.at(L"data").as_array().at(0).as_object().at(L"row").as_array().at(0)
+						};
+
+						request.reply(web::http::status_codes::OK, send_response_json);
+					}).wait();
+
+					break;
+				}
+			    case routes::account:
 				{
 					std::wstring account_username_utf16{ path[1] };
 
@@ -368,7 +475,7 @@ namespace routing
 							};
 
 							request.reply(web::http::status_codes::OK, send_response_json);
-							_DEBUG_WPRINT(response.to_string());
+							_DEBUG_WPRINT(response.to_string())
 
 						}).wait();
 
@@ -456,7 +563,7 @@ namespace routing
 
 					break;
 				}
-			case routes::account_username_memes:
+				case routes::account_username_memes:
 				{
 					std::wstring account_username_utf16{ path[1] };
 
@@ -478,9 +585,6 @@ namespace routing
 						{
 							try
 							{
-								_DEBUG_WPRINT(response.to_string())
-								//std::wcout << response.to_string() << std::endl;
-
 								web::json::value response_json{ response.extract_json().get() };
 
 								web::json::value send_response_json
@@ -490,8 +594,6 @@ namespace routing
 								};
 
 								_DEBUG_WPRINT(send_response_json.to_string())
-
-								//std::wcout << send_response_json.to_string() << std::endl;
 
 								request.reply(web::http::status_codes::OK, send_response_json);
 							}
@@ -504,7 +606,7 @@ namespace routing
 
 					break;
 				}
-			case routes::meme:
+				case routes::meme:
 				{
 					auto kek = web::http::uri::split_query(web::http::uri::decode(request.relative_uri().query()));
 
@@ -530,9 +632,6 @@ namespace routing
 
 					client.request(cypher_get_meme_request).then([&](web::http::http_response response)
 					{
-						_DEBUG_WPRINT(response.to_string())
-						//std::wcout << response.to_string() << std::endl;
-
 						web::json::value response_json{ response.extract_json().get() };
 
 						web::json::value send_response_json
@@ -540,12 +639,12 @@ namespace routing
 							response_json.at(L"results").as_array().at(0).as_object()
 								.at(L"data").as_array().at(0).as_object().at(L"row")
 						};
-
+						_DEBUG_WPRINT(response_json.to_string())
 						request.reply(web::http::status_codes::OK, send_response_json);
 					}).wait();
 
 				}
-			case routes::meme_id:
+				case routes::meme_id:
 				{
 					std::wstring meme_uuid_utf16{ path[1] };
 
@@ -566,9 +665,6 @@ namespace routing
 
 					client.request(cypher_get_meme_request).then([&](web::http::http_response response)
 						{
-							_DEBUG_WPRINT(response.to_string())
-							//std::wcout << response.to_string() << std::endl;
-
 							web::json::value response_json{ response.extract_json().get() };
 
 							web::json::value send_response_json
@@ -576,6 +672,7 @@ namespace routing
 									response_json.at(L"results").as_array().at(0).as_object()
 									.at(L"data").as_array().at(0).as_object().at(L"row").as_array().at(0)
 							};
+							_DEBUG_WPRINT(response_json.to_string())
 
 							request.reply(web::http::status_codes::OK, send_response_json);
 						}).wait();
@@ -602,9 +699,6 @@ namespace routing
 
 					client.request(cypher_create_user_request).then([&](web::http::http_response response)
 						{
-							_DEBUG_WPRINT(response.to_string())
-							//std::wcout << response.to_string() << std::endl;
-
 							web::json::value response_json{ response.extract_json().get() };
 
 							web::json::value send_response_json
@@ -612,7 +706,7 @@ namespace routing
 								response_json.at(L"results").as_array().at(0).as_object()
 									.at(L"data").as_array().at(0).as_object().at(L"row")
 							};
-
+							_DEBUG_WPRINT(response_json.to_string())
 							request.reply(web::http::status_codes::OK, send_response_json);
 						}).wait();
 
@@ -634,12 +728,23 @@ namespace routing
 
 					cypher_ranking_users_utf16.append(L"{\"statements\": [{\"statement\": \"MATCH(acc:Account)-[:LIKED]->(meme:Meme) with meme, count(meme) as like_num, collect(meme) as memes order by like_num return like_num, memes\"}]}");
 
+					web::http::http_request cypher_ranking_users_request{ web::http::methods::POST };
+					cypher_ranking_users_request.headers().add(L"Authorization", L"Basic " + auth_64);
+					cypher_ranking_users_request.set_body(web::json::value::parse(cypher_ranking_users_utf16));
 
-					//
-					/
-						/
-						/
-						/
+					client.request(cypher_ranking_users_request).then([&](web::http::http_response response)
+						{
+							web::json::value response_json{ response.extract_json().get() };
+
+							web::json::value send_response_json
+							{
+								response_json.at(L"results").as_array().at(0).as_object()
+									.at(L"data").as_array().at(0).as_object().at(L"row")
+							};
+							_DEBUG_WPRINT(response_json.to_string())
+							request.reply(web::http::status_codes::OK, send_response_json);
+						}).wait();
+					
 					break;
 				}
 				case routes::ranking_memes:
@@ -649,11 +754,22 @@ namespace routing
 
 					cypher_ranking_users_utf16.append(L"{\"statements\": [{\"statement\": \"MATCH(acc:Account)-[:LIKED]->(acc2:Account) with acc2, count(acc2) as like_num, collect(acc2) as acc2 order by like_num return like_num, acc2\"}]}");
 
-					//
-					//
-					//
-					//
+					web::http::http_request cypher_ranking_users_request{ web::http::methods::POST };
+					cypher_ranking_users_request.headers().add(L"Authorization", L"Basic " + auth_64);
+					cypher_ranking_users_request.set_body(web::json::value::parse(cypher_ranking_users_utf16));
 
+					client.request(cypher_ranking_users_request).then([&](web::http::http_response response)
+						{
+							web::json::value response_json{ response.extract_json().get() };
+
+							web::json::value send_response_json
+							{
+								response_json.at(L"results").as_array().at(0).as_object()
+									.at(L"data").as_array().at(0).as_object().at(L"row")
+							};
+							_DEBUG_WPRINT(response_json.to_string())
+							request.reply(web::http::status_codes::OK, send_response_json);
+						}).wait();
 
 					break;
 				}
@@ -664,11 +780,23 @@ namespace routing
 
 					cypher_ranking_users_utf16.append(L"{\"statements\": [{\"statement\": \"MATCH(acc:Account)-[:LIKED]->(com:Comment) with com, count(com) as like_num, collect(com) as coms order by like_num return like_num, coms\"}]}");
 
-					//
-					//
-					//
-					//
-					//
+					web::http::http_request cypher_ranking_users_request{ web::http::methods::POST };
+					cypher_ranking_users_request.headers().add(L"Authorization", L"Basic " + auth_64);
+					cypher_ranking_users_request.set_body(web::json::value::parse(cypher_ranking_users_utf16));
+
+					client.request(cypher_ranking_users_request).then([&](web::http::http_response response)
+						{
+							web::json::value response_json{ response.extract_json().get() };
+
+							web::json::value send_response_json
+							{
+								response_json.at(L"results").as_array().at(0).as_object()
+									.at(L"data").as_array().at(0).as_object().at(L"row")
+							};
+							_DEBUG_WPRINT(response_json.to_string())
+							request.reply(web::http::status_codes::OK, send_response_json);
+						}).wait();
+
 
 					break;
 				}
@@ -679,17 +807,43 @@ namespace routing
 				}
 				case routes::comment_id:
 				{
+					std::wstring comment_id_utf16{ path[1] };
+
+					std::wstring cypher_comment_utf16;
+					
+					cypher_comment_utf16.reserve(256);
+					cypher_comment_utf16.append(L"{\"statements\": [{\"statement\": \"MATCH(comment:Comment{id: \\\"");
+					cypher_comment_utf16.append(comment_id_utf16);
+					cypher_comment_utf16.append(L"\\\"}) return comment\"}]}");
+
+					web::json::value cypher_comment_json{ web::json::value::parse(cypher_comment_utf16) };
+					web::http::http_request cypher_comment_request{ web::http::methods::POST };
+					cypher_comment_request.headers().add(L"Authorization", L"Basic " + auth_64);
+					cypher_comment_request.set_body(cypher_comment_json);
+
+					client.request(cypher_comment_request).then([&](web::http::http_response response)
+						{
+							web::json::value response_json{ response.extract_json().get() };
+
+							web::json::value send_response_json
+							{
+								response_json.at(L"results").as_array().at(0).as_object()
+									.at(L"data").as_array().at(0).as_object().at(L"row").as_array().at(0)
+							};
+							_DEBUG_WPRINT(response_json.to_string())
+							request.reply(web::http::status_codes::OK, send_response_json);
+						}).wait();
 
 					break;
 				}
 				case routes::garbage:
 				{
-
+					request.reply(web::http::status_codes::MisdirectedRequest);
 					break;
 				}
 				default:
 				{
-					//request.reply(web::http::status_codes::MisdirectedRequest);
+					
 					return;
 				}
 			}
@@ -698,10 +852,21 @@ namespace routing
 
 		void handle_post(web::http::http_request request)
 		{
+			//web::http::http_request* request_ptr = new web::http::http_request;
+
+			//*request_ptr = request;
+
 			std::vector<utility::string_t>path = web::http::uri::split_path(web::http::uri::decode(request.relative_uri().path()));
 
 			unsigned long long session_ID{ 0 };
 			bool authorized{ false };
+
+			request.get_response().then([](web::http::http_response response)
+				{
+					response.headers().add(L"Access-Control-Allow-Origin", L"http://localhost:3000");
+					response.headers().add(L"Access-Control-Allow-Methods", L"GET, POST, OPTIONS, PATCH,DELETE");
+					response.headers().add(L"Access-Control-Allow-Credentials", L"true");
+				});
 
 			if (request.headers().find(L"Cookie") != request.headers().end())	// if cookie header exists
 			{
@@ -757,8 +922,8 @@ namespace routing
 					{
 						response.headers().add(L"Set-Cookie", std::format<std::wstring>(L"session_ID={}; Max-Age={}", std::to_wstring(session_ID), 86400));
 
-						std::wcout << response.to_string() << std::endl;
-					}).then([&](){});
+						_DEBUG_WPRINT(response.to_string())
+					});
 
 				web::json::value response_json= web::json::value::parse(std::format<std::wstring>(L"{{\"new_session_ID\":{}}}", std::to_wstring(session_ID)));
 
@@ -770,6 +935,8 @@ namespace routing
 				web::json::value json = request.extract_json().get();
 
 				if (
+					!json.has_field(L"avatar") ||
+					!json.has_field(L"image_type") ||
 					!json.has_field(L"username") ||
 					!json.has_field(L"nickname") ||
 					!json.has_field(L"password") ||
@@ -785,12 +952,15 @@ namespace routing
 					request.reply(web::http::status_codes::Conflict);
 					return;
 				}
-
+				std::wstring avatar{ json.at(L"avatar").as_string() };
+				std::wstring image_type{ json.at(L"image_type").as_string() };
 				std::wstring username{ json.at(L"username").as_string() };
 				std::wstring nickname{ json.at(L"nickname").as_string() };
 				std::wstring password{ json.at(L"password").as_string() };
 				std::wstring email{ json.at(L"email").as_string() };
 
+				std::string avatar_utf8{ utility::conversions::to_utf8string(avatar) };
+				std::string image_type_utf8{ utility::conversions::to_utf8string(image_type) };
 				std::string username_utf8{ utility::conversions::to_utf8string(username) };
 				std::string nickname_utf8{ utility::conversions::to_utf8string(nickname) };
 				std::string password_utf8{ utility::conversions::to_utf8string(password) };
@@ -802,40 +972,58 @@ namespace routing
 					user_map::generate::user()
 				);
 
-				std::string cypher_create_user_utf8{ "{\"statements\": [{\"statement\":\"CREATE(u:Account:User{username:\\\"" };
-				
+				std::string cypher_create_user_utf8{ "{\"statements\": [{\"statement\":\"CREATE(u:Account:User{image_type:\\\"" };
+				cypher_create_user_utf8 += image_type_utf8;
+				cypher_create_user_utf8 += "\\\",username:\\\"";
 				cypher_create_user_utf8 += username_utf8;
 				cypher_create_user_utf8 += "\\\",nickname:\\\"";
 				cypher_create_user_utf8 += nickname_utf8;
 				cypher_create_user_utf8 += "\\\",email:\\\"";
 				cypher_create_user_utf8 += email_utf8;
-
-				cypher_create_user_utf8 += "\\\"})\"}]}";
+				cypher_create_user_utf8 += "\\\", created_at: timestamp()})-[:PREFERENCES]->(prefs:Preferences{}) with u, apoc.create.uuid() as avatar_id SET u.avatar = avatar_id return u.avatar as avatar_id\"}]}";	// TODO preferences
 
 				std::wstring cypher_create_user{ utility::conversions::to_utf16string(cypher_create_user_utf8) };
 
-				//std::wcout << cypher_create_user << std::endl;
-
 				web::json::value cypher_create_user_json{ web::json::value::parse(cypher_create_user) };
-
 				web::http::http_request cypher_create_user_request(web::http::methods::POST);
 
-				cypher_create_user_request.headers().add(L"authorization",L"Basic " + auth_64);
-
+				cypher_create_user_request.headers().add(L"authorization", L"Basic " + auth_64);
 				cypher_create_user_request.headers().add(L"Content-Type", L"application/json");
 				cypher_create_user_request.set_body(cypher_create_user_json);
 
-
 				_DEBUG_WPRINT(cypher_create_user_request.to_string())
-				//std::wcout << cypher_create_user_request.to_string() << std::endl;
 
-				client.request(cypher_create_user_request).then([](web::http::http_response response)
+				std::string* uuid_path = new std::string;
+
+				auto kek = client.request(cypher_create_user_request).then([&](web::http::http_response response)
 					{
-						_DEBUG_WPRINT(response.to_string())
-						//std::wcout << response.to_string() << std::endl;
+						try 
+						{
+							_DEBUG_WPRINT(response.to_string())
+
+							web::json::value send_response_json
+							{
+								response.extract_json().get().at(L"results").as_array().at(0).as_object()
+								.at(L"data").as_array().at(0).as_object().at(L"row").as_array().at(0)
+							};
+
+							*uuid_path = utility::conversions::to_utf8string(send_response_json.as_string());
+
+							request.reply(web::http::status_codes::Created);
+						}
+						catch (std::exception& e)
+						{
+							std::cout << "error: " << e.what() << std::endl;
+						}
 					}).wait();
 
-				request.reply(web::http::status_codes::Created);
+				std::fstream avatar_file{ *uuid_path + '.' + image_type_utf8, std::ios::out | std::ios::binary };
+
+				avatar_file << avatar_utf8;
+				avatar_file.close();
+
+				delete uuid_path;
+
 				return;
 			}
 
@@ -913,12 +1101,18 @@ namespace routing
 					neo4j_cypher_request.set_body(neo4j_cypher_json);
 
 					/**/
-					client.request(neo4j_cypher_request).then([](web::http::http_response response)
+					client.request(neo4j_cypher_request).then([&](web::http::http_response response)
 						{
-							std::wcout << response.to_string() << std::endl;
+							web::json::value response_json{	response.extract_json().get() };
+
+							web::json::value send_response_json
+							{
+								response_json.at(L"results").as_array().at(0).as_object()
+								.at(L"data").as_array().at(0).as_object().at(L"row").as_array().at(0)
+							};
+							_DEBUG_WPRINT(send_response_json.as_string())
+							request.reply(web::http::status_codes::OK, send_response_json);
 						}).wait();
-					//*/
-					// wyslac i wytestowac
 
 					break;
 				}
@@ -979,8 +1173,7 @@ namespace routing
 								.at(L"data").as_array().at(0).as_object().at(L"row").as_array().at(0)
 							};
 
-							request.reply(web::http::status_codes::OK,send_response_json);
-
+							request.reply(web::http::status_codes::OK, send_response_json);
 						}).wait();
 
 					break;
@@ -1052,14 +1245,17 @@ namespace routing
 
 							web::json::value tmp = response.extract_json().get();
 
-							std::wcout << tmp.serialize() << std::endl;
+							web::json::value send_response_json
+							{
+								tmp.at(L"results").as_array().at(0).as_object()
+									.at(L"data").as_array().at(0).as_object().at(L"row").as_array().at(0)
+							};
 
-							*uuid_path = utility::conversions::to_utf8string(tmp.at(L"results").as_array().at(0).at(L"data").as_array().at(0).at(L"row").as_array().at(0).as_string());
-
+							*uuid_path = utility::conversions::to_utf8string(send_response_json.as_string());
+							_DEBUG_WPRINT(send_response_json)
 							request.reply(web::http::status_codes::Created);
 
 						}).wait();
-					//*/
 
 					std::fstream meme_file{ *uuid_path+".png", std::ios::out | std::ios::binary };
 
@@ -1096,13 +1292,11 @@ namespace routing
 					/**/
 					client.request(neo4j_cypher_request).then([&](web::http::http_response response)
 						{
-							_DEBUG_WPRINT(response.to_string())
+							//_DEBUG_WPRINT(response.to_string())
 
 							request.reply(web::http::status_codes::OK);
 						}).wait();		
 					//*/
-
-					//testeeeee
 					break;
 				}
 			case routes::meme_id_comment:
@@ -1140,7 +1334,7 @@ namespace routing
 
 					client.request(neo4j_cypher_request).then([&](web::http::http_response response)
 						{
-							_DEBUG_WPRINT(response.to_string())
+							
 
 							web::json::value tmp = response.extract_json().get();
 
@@ -1149,7 +1343,7 @@ namespace routing
 								tmp.at(L"results").as_array().at(0).as_object()
 									.at(L"data").as_array().at(0).as_object().at(L"row").as_array().at(0)
 							};
-
+							_DEBUG_WPRINT(send_response_json.as_string())
 							request.reply(web::http::status_codes::Created);
 						}).wait();
 
@@ -1237,8 +1431,21 @@ namespace routing
 				return;
 			}
 
+			auto& user = session_ID_map.at(session_ID);
+
 			switch(path_to_route_parser(path))
 			{
+			case routes::preferences:
+				{
+					if(!json.has_field(L"preferences"))
+					{
+						request.reply(web::http::status_codes::BadRequest);
+						return;
+					}
+
+					request.reply(web::http::status_codes::OK);
+					return;
+				}
 			case routes::comment_id_edit:
 				{
 					if(!json.has_field(L"body"))

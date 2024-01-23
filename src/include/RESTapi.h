@@ -5,16 +5,14 @@
 #include <cpprest/asyncrt_utils.h>
 #include <cpprest/http_headers.h>
 
-#include <boost/archive/iterators/binary_from_base64.hpp>
-#include <boost/archive/iterators/base64_from_binary.hpp>
-#include <boost/archive/iterators/transform_width.hpp>
-#include <boost/algorithm/string.hpp>
 
 #include <boost/random.hpp>
 
 #include "usermap.h"
 #include <fstream>
 #include <ctime>
+
+#include "requests.h"
 
 namespace restsdk = web::http;
 namespace json = web::json;
@@ -36,13 +34,16 @@ class RESTServer
 	web::http::experimental::listener::http_listener listener_;
 	const std::wstring uri_,path_userfile;
 	user_map::user_map users_{};
-
+	web::http::client::http_client& client_;
+	routing::request_processor processor;
 	std::map<std::string,user_map::user&> sessions_;	// session_id  -  user
 public:
-	RESTServer(const std::wstring uri,const std::wstring path_userfile)
+	RESTServer(const std::wstring uri,const std::wstring path_userfile,web::http::client::http_client&client)
 		:uri_(uri),
 		listener_(restsdk::experimental::listener::http_listener(uri)),
-		path_userfile(path_userfile)
+		path_userfile(path_userfile),
+		client_(client),
+		processor(routing::request_processor(listener_, client_, users_))
 	{
 		users_.load_users_from_file(utility::conversions::to_utf8string(path_userfile));
 	}

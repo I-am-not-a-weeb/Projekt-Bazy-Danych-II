@@ -82,7 +82,7 @@ web::http::experimental::listener::http_listener tmp_listener(L"http://localhost
 web::http::client::http_client tmp_client(L"http://localhost:7474/db/neo4j/tx/commit");
 user_map::user_map tmp_user_map;
 
-routing::RequestProcessor tmp_processor(tmp_listener, tmp_client, tmp_user_map);
+routing::request_processor tmp_processor(tmp_listener, tmp_client, tmp_user_map);
 user_map::user userred{ "user","user",user_map::generate::user() };
 
 /**
@@ -450,8 +450,6 @@ BOOST_AUTO_TEST_CASE(ranking_memes)
 			BOOST_CHECK_EQUAL(response.status_code(), web::http::status_codes::OK);
 
 			web::json::value response_body_json = response.extract_json().get();
-
-
 		});
 
 	//
@@ -477,7 +475,7 @@ BOOST_AUTO_TEST_CASE(rest_on)
 	web::http::client::http_client tmp_client(neo4j_uri);
 	user_map::user_map tmp_user_map;
 
-	RequestProcessor tmp_processor(tmp_listener, tmp_client, tmp_user_map);
+	request_processor tmp_processor(tmp_listener, tmp_client, tmp_user_map);
 
 
 	while (true);

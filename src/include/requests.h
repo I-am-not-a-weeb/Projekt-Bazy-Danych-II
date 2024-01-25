@@ -988,6 +988,11 @@ namespace routing
 				}
 				case routes::admin_dump:
 				{
+					if(!user.permissions_union.permissions.can_modify_admins)
+					{
+						request.reply(web::http::status_codes::Forbidden);
+						return;
+					}
 					std::wstring cypher_dump_utf16;
 					cypher_dump_utf16.reserve(256);
 
@@ -1203,6 +1208,12 @@ namespace routing
 
 				//delete uuid_path;
 
+				return;
+			}
+			else if(!path.empty() && path[0]==L"loadusers")
+			{
+				users.load_users_from_file(path_to_file);
+				request.reply(web::http::status_codes::OK);
 				return;
 			}
 
@@ -1719,12 +1730,6 @@ namespace routing
 				case routes::saveusers:
 				{
 					users.save_users_to_file(path_to_file);
-					request.reply(web::http::status_codes::OK);
-					return;
-				}
-				case routes::loadusers:
-				{
-					users.load_users_from_file(path_to_file);
 					request.reply(web::http::status_codes::OK);
 					return;
 				}

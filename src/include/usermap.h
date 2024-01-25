@@ -160,7 +160,7 @@ namespace user_map
 			return permission_union
 			{
 				{
-					false,
+				false,
 				false,
 				false,
 				false,
